@@ -1,0 +1,183 @@
+
+=== step1_process.py ===
+started web-1: a real process on port 18101
+  request 1: hello from web-1 (v1)
+  request 2: hello from web-1 (v1)
+  request 3: hello from web-1 (v1)
+the process is killed, the way a crash would kill it
+  request 4: no answer
+  request 5: no answer
+  request 6: no answer
+nobody restarts it: 3 of 3 requests after the crash got no answer
+
+=== step2_desired.py ===
+want 3, have 0 -> start 3
+want 3, have 1 -> start 2
+want 3, have 3 -> nothing to do
+want 3, have 5 -> stop web-5, web-4
+want 0, have 2 -> stop web-2, web-1
+
+=== step3_loop.py ===
+turn  0: want 3, have 0 -> start web-1, start web-2, start web-3
+turn  1: want 3, have 3 -> nothing to do
+turn  2: want 3, have 3 -> nothing to do
+turn  3: want 3, have 3 -> nothing to do
+        (we change the wish to 5 pods)
+turn  4: want 5, have 3 -> start web-4, start web-5
+turn  5: want 5, have 5 -> nothing to do
+turn  6: want 5, have 5 -> nothing to do
+turn  7: want 5, have 5 -> nothing to do
+        (we change the wish to 2 pods)
+turn  8: want 2, have 5 -> stop web-5, stop web-4, stop web-3
+turn  9: want 2, have 2 -> nothing to do
+turn 10: want 2, have 2 -> nothing to do
+turn 11: want 2, have 2 -> nothing to do
+running at the end: web-1, web-2
+
+=== step4_recovery.py ===
+a crash:
+  turn 0: start web-1, start web-2, start web-3
+          (web-2 crashes)
+  turn 1: web-2 is gone, start web-4
+  turn 2: nothing to do
+a hung pod, and we only look at "is the process alive":
+  turn 0: nothing to do
+  turn 1: nothing to do
+  turn 2: nothing to do
+  turn 3: nothing to do
+  turn 4: nothing to do
+  turn 5: nothing to do
+  turn 6: nothing to do
+  turn 7: nothing to do
+  after 8 turns: web-1, web-2, web-3; 8 of 12 requests answered
+a hung pod, and every turn we ask "are you ok?":
+  turn 0: web-2 is silent (1 of 3)
+  turn 1: web-2 is silent (2 of 3)
+  turn 2: web-2 is silent (3 of 3), kill web-2, web-2 is gone, start web-4
+  turn 3: nothing to do
+  turn 4: nothing to do
+  turn 5: nothing to do
+  turn 6: nothing to do
+  turn 7: nothing to do
+  after 8 turns: web-1, web-3, web-4; 12 of 12 requests answered
+
+=== step5_scheduler.py ===
+first node with room: node-a [1 2 3]   node-b [     ]   node-c [     ]   node-a dies -> 0 of 3 pods still run
+emptiest node wins  : node-a [1    ]   node-b [2    ]   node-c [3    ]   node-a dies -> 2 of 3 pods still run
+now keep adding pods, emptiest node first:
+  web-1 -> node-a   node-a [1    ]   node-b [     ]   node-c [     ]
+  web-2 -> node-b   node-a [1    ]   node-b [2    ]   node-c [     ]
+  web-3 -> node-c   node-a [1    ]   node-b [2    ]   node-c [3    ]
+  web-4 -> node-a   node-a [1 4  ]   node-b [2    ]   node-c [3    ]
+  web-5 -> node-b   node-a [1 4  ]   node-b [2 5  ]   node-c [3    ]
+  web-6 -> node-c   node-a [1 4  ]   node-b [2 5  ]   node-c [3 6  ]
+  web-7 -> node-a   node-a [1 4 7]   node-b [2 5  ]   node-c [3 6  ]
+  web-8 -> node-b   node-a [1 4 7]   node-b [2 5 8]   node-c [3 6  ]
+  web-9 -> node-c   node-a [1 4 7]   node-b [2 5 8]   node-c [3 6 9]
+  web-10 -> no node has room: it waits
+
+=== step6_nodes.py ===
+3 nodes, each one a real program with 3 slots. the wish: 3 pods
+turn 0: start web-1 on node-a, start web-2 on node-b, start web-3 on node-c
+        (web-1 crashes) its node agent starts it again: it answers after 404 ms, restarts: 1
+        the controller saw: nothing to do
+        (node-b loses power: its agent and its pods die together)
+turn 1: node-b silent for 0.28 s -> nothing to do
+turn 2: node-b silent for 0.49 s -> nothing to do
+turn 3: node-b silent for 0.69 s -> node-b is silent: web-2 is lost, start web-4 on node-a
+turn 4: node-b silent for 1.33 s -> nothing to do
+turn 5: node-b silent for 1.54 s -> nothing to do
+turn 6: node-b silent for 1.76 s -> nothing to do
+turn 7: node-b silent for 1.96 s -> nothing to do
+at the end: web-1 on node-a, web-3 on node-c, web-4 on node-a
+node-b was declared dead after 669 ms; 3 pods answered again after 1093 ms
+
+=== step7_service.py ===
+9 requests to the service on port 18080: web-1 3, web-2 3, web-3 3
+node-b loses power while a client sends a request every 20 ms
+  0.70 s later: node-b is silent: web-2 is lost, start web-4 on node-a
+  62 requests sent, 7 failed, the last failure 0.63 s after the power cut
+6 requests to the old address of web-2: 0 answered
+6 requests to the service: 6 answered (web-1 2, web-3 2, web-4 2)
+
+=== step8_rollout.py ===
+rolling update v1 -> v2, one request every 20 ms the whole time:
+  turn 0: start web-4 on node-a (v2)
+  turn 1: wait: web-4 does not answer yet
+  turn 2: drain web-1
+  turn 3: stop web-1
+  turn 4: start web-5 on node-a (v2)
+  turn 5: wait: web-5 does not answer yet
+  turn 6: drain web-2
+  turn 7: stop web-2
+  turn 8: start web-6 on node-b (v2)
+  turn 9: wait: web-6 does not answer yet
+  turn 10: drain web-3
+  turn 11: stop web-3
+  104 requests sent, 0 failed; answered: 52 by v1, 52 by v2
+the blunt way v2 -> v3: stop every pod, then start new ones:
+  turn 0: start web-7 on node-a, start web-8 on node-b, start web-9 on node-c
+  turn 1: nothing to do
+  31 requests sent, 13 failed; answered: 8 by v2, 10 by v3
+a broken release, v4-broken, that crashes the moment it starts:
+  turn 0: start web-10 on node-a (v4-broken)
+  turn 1: wait: web-10 does not answer yet
+  turn 2: wait: web-10 does not answer yet
+  turn 3: wait: web-10 does not answer yet
+  turn 4: wait: web-10 does not answer yet
+  turn 5: wait: web-10 does not answer yet
+  turn 6: wait: web-10 does not answer yet
+  turn 7: wait: web-10 does not answer yet
+  72 requests sent, 0 failed; answered: 72 by v3
+  web-10 was restarted 15 times and never answered; the old pods never left
+we write v3 back into the store:
+  turn 0: drain web-10
+  turn 1: stop web-10
+  28 requests sent, 0 failed; answered: 28 by v3
+at the end: web-7 (v3), web-8 (v3), web-9 (v3)
+
+=== exercise_grow.py ===
+the wish goes from 3 to 12: 6 pods start, 3 wait for room
+  node-a 3, node-b 3, node-c 3
+we start one more agent, node-d, with 3 slots
+  next turn: start web-10 on node-d, start web-11 on node-d, start web-12 on node-d
+  node-a 3, node-b 3, node-c 3, node-d 3; 12 of 12 pods answer
+
+=== tests.py ===
+ok  a started pod answers
+ok  a killed pod does not answer
+ok  plan: nothing running -> start all
+ok  plan: equal -> nothing
+ok  plan: too many -> stop the newest
+ok  loop: first turn starts 3
+ok  loop: second turn does nothing
+ok  loop: a smaller wish stops pods
+ok  loop: a crashed pod is replaced
+ok  loop: the new pod answers
+ok  hung pod without a health check stays
+ok  hung pod with a health check is replaced
+ok  it is killed on the third silent turn
+ok  scheduler spreads
+ok  first fit packs
+ok  9 pods fill 9 slots
+ok  the 10th pod has no node
+ok  a full node is filtered out
+ok  nodes: one pod per node
+ok  nodes: the agent restarts a crashed pod, the controller does nothing
+ok  nodes: a dead node loses its pod, a new one starts elsewhere
+ok  nodes: dead only after the limit
+ok  service: only ready pods that are not stopping
+ok  service: 9 requests, 3 per pod
+ok  service: the old address is dead
+ok  service: all 6 answered by the 3 live pods
+ok  service: some requests fail before the node is declared dead
+ok  rolling update: no failed request
+ok  rolling update: start, drain, stop, three times
+ok  stop all, start all: requests fail
+ok  broken release: every request still answered by v3
+ok  broken release: the new pod keeps crashing
+ok  rollback: 3 pods of v3 remain
+ok  exercise: 6 start, 3 wait
+ok  exercise: a new node takes the 3 waiting pods
+
+35 tests passed
